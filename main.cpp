@@ -21,6 +21,7 @@ void pretty_print(size_t bytes, std::string name, event_aggregate agg) {
 // return true on success, otherwise store the file content in output
 // the result will include at least SIMDJSON_PADDING bytes of padding.
 static bool read_file(const char *filename, std::vector<char> &output) {
+  output.clear();
   // We intentionally mimick the way that Node.js reads files.
   std::FILE *fp = std::fopen(filename, "rb");
   if (fp == nullptr) {
@@ -49,6 +50,42 @@ static bool read_file(const char *filename, std::vector<char> &output) {
   return true;
 }
 
+// return true on success, otherwise store the file content in output
+// the result will include at least SIMDJSON_PADDING bytes of padding.
+static bool two_pass_read_file(const char *filename,
+                               std::vector<char> &output) {
+  output.clear();
+  // We intentionally mimick the way that Node.js reads files.
+  std::FILE *fp = std::fopen(filename, "rb");
+  if (fp == nullptr) {
+    return false;
+  }
+
+  // Get the file size
+  int ret = std::fseek(fp, 0, SEEK_END);
+  if (ret < 0) {
+    return false;
+  }
+
+  long llen = std::ftell(fp);
+  if ((llen < 0) || (llen == LONG_MAX)) {
+    return false;
+  }
+  output.resize(llen + simdjson::SIMDJSON_PADDING);
+
+  // Read the padded_string
+  std::rewind(fp);
+  size_t bytes_read = std::fread(output.data(), 1, llen, fp);
+  if (std::fclose(fp) != 0) {
+    return false;
+  }
+
+  if (bytes_read != (size_t)llen) {
+    return false;
+  }
+  output.resize(bytes_read);
+  return true;
+}
 using result = std::tuple<bool, std::string, std::string, std::string,
                           std::string, std::string, bool, bool>;
 
@@ -74,12 +111,12 @@ result read_json(const std::vector<char> &input) {
 
   // Hint: check for error before using the document.
   if (error) {
-    std::cout << "error parsing " << std::endl;
+    std::cout << "error parsing  (can't get document)" << error << std::endl;
     return {};
   }
   error = document.get_object().get(main_object);
   if (error) {
-    std::cout << "error parsing " << std::endl;
+    std::cout << "error parsing (can't get object) " << error << std::endl;
     return {};
   }
 
@@ -202,7 +239,7 @@ result read_json(const std::vector<char> &input) {
   // No need to optimize for the failed case, since this is highly unlikely.
   if (error != simdjson::error_code::NO_SUCH_FIELD &&
       error != simdjson::error_code::SUCCESS) {
-    std::cout << "error parsing " << std::endl;
+    std::cout << "error parsing " << error << std::endl;
     return {};
   }
   return {includes_keys, name, main,          exports,
@@ -394,18 +431,36 @@ int main(int argc, char **argv) {
     std::cout << "Usage: " << argv[0] << " <jsonfile>" << std::endl;
     return EXIT_FAILURE;
   }
+  const char *filename = argv[1];
   std::vector<char> json_content;
-  if (!read_file(argv[1], json_content)) {
-    std::cout << "Could not read file " << argv[1] << std::endl;
+  if (!two_pass_read_file(filename, json_content)) {
+    std::cout << "Could not read file " << filename << std::endl;
     return EXIT_FAILURE;
   }
   result r;
-  auto [includes_keys, name, main, exports, imports, type, parse_exports,
-        parse_imports] = read_json(json_content);
+  pretty_print(json_content.size(), "read_file",
+               bench([&json_content, &filename]() {
+                 json_content.clear();
+                 json_content.shrink_to_fit();
+                 read_file(filename, json_content);
+               }));
+  pretty_print(json_content.size(), "two_pass_read_file",
+               bench([&json_content, &filename]() {
+                 json_content.clear();
+                 json_content.shrink_to_fit();
+                 two_pass_read_file(filename, json_content);
+               }));
+
   pretty_print(json_content.size(), "read_json",
                bench([&json_content, &r]() { r = read_json(json_content); }));
   pretty_print(
       json_content.size(), "fast_read_json",
       bench([&json_content, &r]() { r = fast_read_json(json_content); }));
+  pretty_print(json_content.size(), "file load + fast_read_json",
+               bench([&json_content, &filename, &r]() {
+                 json_content.clear();
+                 read_file(filename, json_content);
+                 r = fast_read_json(json_content);
+               }));
   return EXIT_SUCCESS;
 }
