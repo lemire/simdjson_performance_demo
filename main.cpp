@@ -153,7 +153,7 @@ result read_json(const std::vector<char> &input) {
 
     // Check for "imports" field
     simdjson::ondemand::json_type imports_json_type;
-    imports_value.type().get(imports_json_type);
+    error = imports_value.type().get(imports_json_type);
     if (!error) {
       std::string_view imports_value_view;
       switch (imports_json_type) {
