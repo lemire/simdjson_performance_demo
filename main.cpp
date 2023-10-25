@@ -259,7 +259,7 @@ result fast_read_json(const std::vector<char> &input) {
   // A padded_string_view is a string_view can be faster than a
   // padded_string because it does not require a copy!!!
   simdjson::padded_string_view json_string(input.data() + start, size,
-                                           input.size() - start);
+                                           input.capacity() - start);
   simdjson::ondemand::document document;
   // Hint: we are going to require that the JSON document contain an object at
   // its root.
